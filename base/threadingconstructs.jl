@@ -25,55 +25,62 @@ function _threadsfor(iter,lbody)
     lidx = iter.args[1]         # index
     range = iter.args[2]
     quote
-        local threadsfor_fun
-        let range = $(esc(range))
-        function threadsfor_fun(onethread=false)
-            r = range # Load into local variable
-            lenr = length(r)
-            # divide loop iterations among threads
-            if onethread
-                tid = 1
-                len, rem = lenr, 0
-            else
-                tid = threadid()
-                len, rem = divrem(lenr, nthreads())
-            end
-            # not enough iterations for all the threads?
-            if len == 0
-                if tid > rem
-                    return
-                end
-                len, rem = 1, 0
-            end
-            # compute this thread's iterations
-            f = 1 + ((tid-1) * len)
-            l = f + len - 1
-            # distribute remaining iterations evenly
-            if rem > 0
-                if tid <= rem
-                    f = f + (tid-1)
-                    l = l + tid
-                else
-                    f = f + rem
-                    l = l + rem
-                end
-            end
-            # run this thread's iterations
-            for i = f:l
-                local $(esc(lidx)) = Base.unsafe_getindex(r,i)
+        # Fast-track serial execution for case of nthreads == 1
+        if nthreads() == 1
+            for $(esc(lidx)) in $(esc(range))
                 $(esc(lbody))
             end
-        end
-        end
-        # Hack to make nested threaded loops kinda work
-        if threadid() != 1 || in_threaded_loop[]
-            # We are in a nested threaded loop
-            Base.invokelatest(threadsfor_fun, true)
         else
-            in_threaded_loop[] = true
-            # the ccall is not expected to throw
-            ccall(:jl_threading_run, Cvoid, (Any,), threadsfor_fun)
-            in_threaded_loop[] = false
+            local threadsfor_fun
+            let range = $(esc(range))
+            function threadsfor_fun(onethread=false)
+                r = range # Load into local variable
+                lenr = length(r)
+                # divide loop iterations among threads
+                if onethread
+                    tid = 1
+                    len, rem = lenr, 0
+                else
+                    tid = threadid()
+                    len, rem = divrem(lenr, nthreads())
+                end
+                # not enough iterations for all the threads?
+                if len == 0
+                    if tid > rem
+                        return
+                    end
+                    len, rem = 1, 0
+                end
+                # compute this thread's iterations
+                f = 1 + ((tid-1) * len)
+                l = f + len - 1
+                # distribute remaining iterations evenly
+                if rem > 0
+                    if tid <= rem
+                        f = f + (tid-1)
+                        l = l + tid
+                    else
+                        f = f + rem
+                        l = l + rem
+                    end
+                end
+                # run this thread's iterations
+                for i = f:l
+                    local $(esc(lidx)) = Base.unsafe_getindex(r,i)
+                    $(esc(lbody))
+                end
+            end
+            end
+            # Hack to make nested threaded loops kinda work
+            if threadid() != 1 || in_threaded_loop[]
+                # We are in a nested threaded loop
+                Base.invokelatest(threadsfor_fun, true)
+            else
+                in_threaded_loop[] = true
+                # the ccall is not expected to throw
+                ccall(:jl_threading_run, Cvoid, (Any,), threadsfor_fun)
+                in_threaded_loop[] = false
+            end
         end
         nothing
     end
